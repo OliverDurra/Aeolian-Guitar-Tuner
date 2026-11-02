@@ -1,13 +1,9 @@
 import { detectPitch, rms } from './pitch.js';
+import { INSTRUMENTS, findTuning } from './tunings.js';
 
-const STRINGS = [
-  { n: 6, name: 'E', oct: 2, midi: 40 },
-  { n: 5, name: 'A', oct: 2, midi: 45 },
-  { n: 4, name: 'D', oct: 3, midi: 50 },
-  { n: 3, name: 'G', oct: 3, midi: 55 },
-  { n: 2, name: 'B', oct: 3, midi: 59 },
-  { n: 1, name: 'E', oct: 4, midi: 64 },
-];
+let tuning = findTuning(safeGet('tuning'));
+let STRINGS = tuning.strings;
+let range = { minFreq: 60, maxFreq: 1000 };
 const IN_TUNE = 3;   // cents
 const CLOSE = 12;    // cents
 const GATE = 0.01;   // RMS noise gate
@@ -16,7 +12,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   display: document.querySelector('.display'), needle: $('needle'), note: $('note'), octave: $('octave'),
   status: $('status'), freq: $('freq'), cents: $('cents'), target: $('target'),
-  strings: $('strings'), start: $('start'), auto: $('auto'), a4: $('a4'), tone: $('tone'),
+  strings: $('strings'), start: $('start'), tuning: $('tuning'), sub: $('sub'), auto: $('auto'), a4: $('a4'), tone: $('tone'),
 };
 
 let a4 = Number(safeGet('a4')) || 440;
@@ -47,13 +43,52 @@ function safeSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
   }
 })();
 
-STRINGS.forEach((s, i) => {
-  const b = document.createElement('button');
-  b.innerHTML = `${s.name}<small>${s.n}${['st','nd','rd'][s.n-1] || 'th'}</small>`;
-  b.title = `String ${s.n}: ${s.name}${s.oct}`;
-  b.onclick = () => { selected = i; el.auto.checked = false; history = []; renderStrings(); updateTarget(); };
-  el.strings.appendChild(b);
+INSTRUMENTS.forEach((inst) => {
+  const g = document.createElement('optgroup');
+  g.label = inst.name;
+  inst.tunings.forEach(([id, name, spec]) => {
+    const o = document.createElement('option');
+    o.value = `${inst.id}:${id}`;
+    o.textContent = `${name} — ${spec.split('|')[0].trim().replace(/\d/g, '').replace(/#/g, '♯').replace(/(?<=[A-G])b/g, '♭')}`;
+    g.appendChild(o);
+  });
+  el.tuning.appendChild(g);
 });
+el.tuning.onchange = () => applyTuning(el.tuning.value);
+
+function applyTuning(key) {
+  tuning = findTuning(key);
+  STRINGS = tuning.strings;
+  el.tuning.value = tuning.key;
+  safeSet('tuning', tuning.key);
+  el.sub.textContent = `${tuning.inst.name} · ${tuning.name}`;
+  const freqs = STRINGS.map((s) => freqOf(s.midi));
+  // Detection range follows the instrument: allow strings to start well flat/sharp.
+  range = { minFreq: Math.min(...freqs) * 0.7, maxFreq: Math.min(1000, Math.max(...freqs) * 2.5) };
+  sizeAnalyser();
+  el.strings.innerHTML = '';
+  const main = STRINGS.filter((s) => !s.label.endsWith('pair')).length;
+  el.strings.style.setProperty('--cols', main);
+  STRINGS.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.innerHTML = `${s.name}<small>${s.label}</small>`;
+    b.title = s.title;
+    b.onclick = () => { selected = i; el.auto.checked = false; history = []; renderStrings(); updateTarget(); };
+    el.strings.appendChild(b);
+  });
+  selected = 0; history = []; tunedAt.clear();
+  renderStrings(); updateTarget();
+}
+
+function sizeAnalyser() {
+  if (!analyser) return;
+  // Window must hold at least two periods of the lowest note.
+  const need = (2.2 * ctx.sampleRate) / range.minFreq;
+  let size = 4096;
+  while (size < need && size < 32768) size *= 2;
+  analyser.fftSize = size;
+  buf = new Float32Array(size);
+}
 
 function renderStrings() {
   [...el.strings.children].forEach((b, i) => {
@@ -74,8 +109,8 @@ function setA4(v) {
 $('calDown').onclick = () => setA4(a4 - 1);
 $('calUp').onclick = () => setA4(a4 + 1);
 el.auto.onchange = () => { history = []; };
+applyTuning(tuning.key);
 setA4(a4);
-renderStrings();
 
 // --- Audio ---
 el.start.onclick = async () => {
@@ -88,9 +123,8 @@ el.start.onclick = async () => {
     });
     const src = ctx.createMediaStreamSource(stream);
     analyser = ctx.createAnalyser();
-    analyser.fftSize = ctx.sampleRate > 50000 ? 8192 : 4096;
     src.connect(analyser);
-    buf = new Float32Array(analyser.fftSize);
+    sizeAnalyser();
     running = true;
     el.start.textContent = 'Stop';
     el.status.textContent = 'Listening… pluck a string';
@@ -116,7 +150,7 @@ function loop(now) {
   if (!running) return;
   analyser.getFloatTimeDomainData(buf);
   const level = rms(buf);
-  const r = level > GATE ? detectPitch(buf, ctx.sampleRate) : null;
+  const r = level > GATE ? detectPitch(buf, ctx.sampleRate, range) : null;
 
   if (r && r.clarity > 0.85) {
     history.push(r.freq);

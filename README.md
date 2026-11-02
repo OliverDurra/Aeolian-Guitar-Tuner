@@ -1,6 +1,15 @@
 # Aeolian Guitar Tuner
 
-A chromatic tuner for a 6-string guitar in standard tuning (E A D G B E). It runs in the browser and listens through your microphone.
+A tuner for guitar and bass that runs in the browser and listens through your microphone.
+
+**Instruments and tunings**
+- 6-string guitar: Standard, Drop D, Double drop D, Half step down, Whole step down, Drop C♯, Drop C, DADGAD, Open G, Open D, Open E, Open A, Open C
+- 7-string guitar: Standard, Drop A
+- 12-string guitar: Standard, Drop D (octave and unison pairs tuned individually)
+- 4-string bass: Standard, Drop D, Half step down
+- 5-string bass: Standard (low B)
+
+**Features**
 
 - YIN pitch detection, accurate to under 0.1 cent on test tones
 - Picks the string automatically, or tap a string to lock onto it
